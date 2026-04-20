@@ -94,10 +94,17 @@ The upload replicates what github.com's drag-and-drop UI does:
 
 1. `POST /upload/policies/assets` — metadata + signed form for the storage backend
 2. `POST <policies.upload_url>` — the bytes (usually straight to S3)
-3. `PUT  <policies.asset_upload_url>` — confirms the upload
+3. `POST <policies.asset_upload_url>` with `_method=put` + `X-CSRF-Token` — confirms the upload
+
+Step 3 used to be a plain `PUT` (and still is in most published references),
+but github.com now rejects that shape with a 422 HTML error page. The working
+shape mirrors what the web UI does: a POST with Rails-style method override
+and the `authenticity_token` duplicated into an `X-CSRF-Token` header. Two
+legacy shapes (classic PUT multipart, PUT urlencoded) remain as automatic
+fallbacks in case GitHub rotates things again.
 
 `gh` itself is used for the two things it's good at: resolving the numeric
-repo id (via `gh repo view --json databaseId`) and posting the final comment
+repo id (via `gh api /repos/{owner}/{name}`) and posting the final comment
 (`gh issue comment`). The only part `gh-drop` owns is the cookie-authenticated
 upload.
 

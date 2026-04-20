@@ -159,13 +159,15 @@ export async function uploadAttachment(
 
   // Step 3 — confirm the asset with GitHub.
   //
-  // The classic shape (used by lisonge/user-attachments) is a plain PUT with
-  // a multipart body containing just `authenticity_token`. As of 2026 that
-  // returns a 422 HTML error page on github.com — the front-end rails router
-  // no longer accepts it. The modern web UI sends a POST with Rails-style
-  // `_method=put` override and the authenticity token also mirrored in an
-  // `X-CSRF-Token` header. We try several variants in order and return the
-  // first one that succeeds.
+  // The classic shape (PUT <asset_upload_url> with a multipart body
+  // containing `authenticity_token`, used by lisonge/user-attachments)
+  // returns a 422 HTML error page on github.com as of 2026 — the front-end
+  // router rejects it before the controller runs. The modern web UI sends a
+  // POST with Rails-style `_method=put` override plus the authenticity
+  // token mirrored into an `X-CSRF-Token` header; that's what works today.
+  //
+  // Strategy A is the happy path. B and C are legacy fallbacks kept around
+  // in case GitHub rotates the shape again; they'll only run if A fails.
   const confirmUrl = new URL(policies.asset_upload_url, host + "/").href;
   const strategies: Array<{ name: string; run: () => Promise<Response> }> = [
     {
