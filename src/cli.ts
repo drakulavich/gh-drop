@@ -23,7 +23,7 @@ import { loadConfig, saveConfig, configPath } from "./config.ts";
 import { uploadAttachment, UploadError } from "./upload.ts";
 import { resolveRepo, postIssueComment, ensureGhAuth } from "./gh.ts";
 
-const VERSION = "0.1.3";
+const VERSION = "0.1.4";
 
 function printUsage(): void {
   console.log(`gh-drop ${VERSION} — drop images into GitHub issues & PRs

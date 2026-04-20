@@ -157,31 +157,98 @@ export async function uploadAttachment(
     throw new UploadError("storage upload failed", storageRes, body);
   }
 
-  // Step 3 — confirm the asset with GitHub
-  const confirmForm = new FormData();
-  confirmForm.append(
-    "authenticity_token",
-    policies.asset_upload_authenticity_token,
-  );
+  // Step 3 — confirm the asset with GitHub.
+  //
+  // The classic shape (used by lisonge/user-attachments) is a plain PUT with
+  // a multipart body containing just `authenticity_token`. As of 2026 that
+  // returns a 422 HTML error page on github.com — the front-end rails router
+  // no longer accepts it. The modern web UI sends a POST with Rails-style
+  // `_method=put` override and the authenticity token also mirrored in an
+  // `X-CSRF-Token` header. We try several variants in order and return the
+  // first one that succeeds.
   const confirmUrl = new URL(policies.asset_upload_url, host + "/").href;
-  dlog(debug, `step 3: PUT ${confirmUrl}`);
-  const confirmRes = await fetch(confirmUrl, {
-    method: "PUT",
-    body: confirmForm,
-    headers: {
-      ...baseHeaders(input.cookie, host),
-      Accept: "application/json",
-      "X-Requested-With": "XMLHttpRequest",
+  const strategies: Array<{ name: string; run: () => Promise<Response> }> = [
+    {
+      name: "POST + _method=put + X-CSRF-Token",
+      run: () => {
+        const f = new FormData();
+        f.append("_method", "put");
+        f.append(
+          "authenticity_token",
+          policies.asset_upload_authenticity_token,
+        );
+        return fetch(confirmUrl, {
+          method: "POST",
+          body: f,
+          headers: {
+            ...baseHeaders(input.cookie, host),
+            Accept: "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "X-CSRF-Token": policies.asset_upload_authenticity_token,
+            "GitHub-Verified-Fetch": "true",
+          },
+        });
+      },
     },
-  });
-  dlog(debug, `step 3: ← ${confirmRes.status} ${confirmRes.statusText}`);
-  if (!confirmRes.ok) {
-    const body = await snapshotBody(confirmRes);
-    dlog(debug, `step 3: body: ${body}`);
-    throw new UploadError("asset confirmation failed", confirmRes, body);
+    {
+      name: "classic PUT multipart",
+      run: () => {
+        const f = new FormData();
+        f.append(
+          "authenticity_token",
+          policies.asset_upload_authenticity_token,
+        );
+        return fetch(confirmUrl, {
+          method: "PUT",
+          body: f,
+          headers: {
+            ...baseHeaders(input.cookie, host),
+            Accept: "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+        });
+      },
+    },
+    {
+      name: "PUT urlencoded + X-CSRF-Token",
+      run: () => {
+        const body = new URLSearchParams({
+          authenticity_token: policies.asset_upload_authenticity_token,
+        }).toString();
+        return fetch(confirmUrl, {
+          method: "PUT",
+          body,
+          headers: {
+            ...baseHeaders(input.cookie, host),
+            Accept: "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Requested-With": "XMLHttpRequest",
+            "X-CSRF-Token": policies.asset_upload_authenticity_token,
+          },
+        });
+      },
+    },
+  ];
+
+  let lastRes: Response | undefined;
+  let lastBody = "";
+  for (let i = 0; i < strategies.length; i++) {
+    const s = strategies[i]!;
+    const tag = `step 3${String.fromCharCode(65 + i)}`;
+    dlog(debug, `${tag}: ${s.name} → ${confirmUrl}`);
+    const res = await s.run();
+    dlog(debug, `${tag}: ← ${res.status} ${res.statusText}`);
+    if (res.ok) return policies.asset;
+    lastRes = res;
+    lastBody = await snapshotBody(res);
+    dlog(debug, `${tag}: body: ${lastBody.slice(0, 400)}`);
   }
 
-  return policies.asset;
+  throw new UploadError(
+    "asset confirmation failed (tried POST+override, PUT multipart, PUT urlencoded)",
+    lastRes!,
+    lastBody,
+  );
 }
 
 export class UploadError extends Error {
