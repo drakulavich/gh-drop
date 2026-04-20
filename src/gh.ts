@@ -20,31 +20,58 @@ async function runGh(args: string[]): Promise<{ stdout: string; stderr: string; 
 }
 
 /**
- * Resolves repo metadata, including the numeric `databaseId` which GitHub's
- * upload endpoint expects as `repository_id`. If `repo` is undefined, `gh`
- * infers it from the current working directory.
+ * Resolves repo metadata, including the numeric repo id which GitHub's
+ * /upload/policies/assets endpoint expects as `repository_id`.
+ *
+ * We can't use `gh repo view --json databaseId` — that field exists on
+ * the GraphQL Repository type but is not whitelisted for the `repo view`
+ * command (see `gh repo view --json` available-fields list). The REST
+ * endpoint /repos/{owner}/{name} returns the same value under `id`, so
+ * we go through `gh api` which reuses the user's existing auth.
+ *
+ * If `repo` is undefined we resolve the current directory first via
+ * `gh repo view --json nameWithOwner`, which *is* whitelisted.
  */
 export async function resolveRepo(repo?: string): Promise<RepoInfo> {
-  const args = ["repo", "view"];
-  if (repo) args.push(repo);
-  args.push("--json", "databaseId,nameWithOwner,owner,name");
+  let nameWithOwner = repo;
 
-  const { stdout, stderr, code } = await runGh(args);
+  if (!nameWithOwner) {
+    const { stdout, stderr, code } = await runGh([
+      "repo",
+      "view",
+      "--json",
+      "nameWithOwner",
+    ]);
+    if (code !== 0) {
+      throw new Error(
+        `gh repo view failed (${code}): ${stderr.trim() || stdout.trim()}`,
+      );
+    }
+    nameWithOwner = (JSON.parse(stdout) as { nameWithOwner: string })
+      .nameWithOwner;
+  }
+
+  const { stdout, stderr, code } = await runGh([
+    "api",
+    `/repos/${nameWithOwner}`,
+    "--jq",
+    "{id: .id, full_name: .full_name, name: .name, owner: .owner.login}",
+  ]);
   if (code !== 0) {
     throw new Error(
-      `gh repo view failed (${code}): ${stderr.trim() || stdout.trim()}`,
+      `gh api /repos/${nameWithOwner} failed (${code}): ${stderr.trim() || stdout.trim()}`,
     );
   }
   const json = JSON.parse(stdout) as {
-    databaseId: number;
-    nameWithOwner: string;
-    owner: { login: string };
+    id: number;
+    full_name: string;
     name: string;
+    owner: string;
   };
   return {
-    id: json.databaseId,
-    nameWithOwner: json.nameWithOwner,
-    owner: json.owner.login,
+    id: json.id,
+    nameWithOwner: json.full_name,
+    owner: json.owner,
     name: json.name,
   };
 }
