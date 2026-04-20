@@ -48,6 +48,8 @@ export interface UploadInput {
    * can pass e.g. https://github.mycompany.com.
    */
   host?: string;
+  /** When true, print each request's status + any error body to stderr. */
+  debug?: boolean;
 }
 
 const UA =
@@ -62,14 +64,34 @@ function baseHeaders(cookie: string, host: string) {
   };
 }
 
-export async function uploadAttachment(input: UploadInput): Promise<PoliciesAsset> {
+function dlog(debug: boolean | undefined, msg: string): void {
+  if (debug) console.error(`[gh-drop upload] ${msg}`);
+}
+
+async function snapshotBody(res: Response): Promise<string> {
+  try {
+    const text = await res.text();
+    return text.slice(0, 2000);
+  } catch {
+    return "<unreadable body>";
+  }
+}
+
+export async function uploadAttachment(
+  input: UploadInput,
+): Promise<PoliciesAsset> {
   const host = (input.host ?? "https://github.com").replace(/\/$/, "");
+  const debug = input.debug;
   // Cast to BlobPart — Bun's File constructor accepts Uint8Array at runtime
   // but TS's lib.dom types require an ArrayBuffer-backed view.
   const blob = new Blob([input.bytes as BlobPart], { type: input.contentType });
   const file = new File([blob], input.filename, { type: input.contentType });
 
   // Step 1 — request upload policy
+  dlog(
+    debug,
+    `step 1: POST ${host}/upload/policies/assets (repo=${input.repositoryId}, size=${file.size}, type=${file.type})`,
+  );
   const policiesForm = new FormData();
   policiesForm.append("repository_id", String(input.repositoryId));
   policiesForm.append("name", file.name);
@@ -86,10 +108,17 @@ export async function uploadAttachment(input: UploadInput): Promise<PoliciesAsse
       Accept: "application/json",
     },
   });
+  dlog(debug, `step 1: ← ${policiesRes.status} ${policiesRes.statusText}`);
   if (!policiesRes.ok) {
-    throw new UploadError("upload/policies/assets failed", policiesRes);
+    const body = await snapshotBody(policiesRes);
+    dlog(debug, `step 1: body: ${body}`);
+    throw new UploadError("upload/policies/assets failed", policiesRes, body);
   }
   const policies = (await policiesRes.json()) as PoliciesResponse;
+  dlog(
+    debug,
+    `step 1: upload_url=${policies.upload_url} same_origin=${policies.same_origin} asset.id=${policies.asset?.id} asset.href=${policies.asset?.href}`,
+  );
 
   // Step 2 — upload bytes to the storage backend (usually S3)
   const storageForm = new FormData();
@@ -115,13 +144,17 @@ export async function uploadAttachment(input: UploadInput): Promise<PoliciesAsse
     storageHeaders.Referer = host + "/";
   }
 
+  dlog(debug, `step 2: POST ${policies.upload_url}`);
   const storageRes = await fetch(policies.upload_url, {
     method: "POST",
     body: storageForm,
     headers: storageHeaders,
   });
+  dlog(debug, `step 2: ← ${storageRes.status} ${storageRes.statusText}`);
   if (!storageRes.ok) {
-    throw new UploadError("storage upload failed", storageRes);
+    const body = await snapshotBody(storageRes);
+    dlog(debug, `step 2: body: ${body}`);
+    throw new UploadError("storage upload failed", storageRes, body);
   }
 
   // Step 3 — confirm the asset with GitHub
@@ -131,6 +164,7 @@ export async function uploadAttachment(input: UploadInput): Promise<PoliciesAsse
     policies.asset_upload_authenticity_token,
   );
   const confirmUrl = new URL(policies.asset_upload_url, host + "/").href;
+  dlog(debug, `step 3: PUT ${confirmUrl}`);
   const confirmRes = await fetch(confirmUrl, {
     method: "PUT",
     body: confirmForm,
@@ -140,8 +174,11 @@ export async function uploadAttachment(input: UploadInput): Promise<PoliciesAsse
       "X-Requested-With": "XMLHttpRequest",
     },
   });
+  dlog(debug, `step 3: ← ${confirmRes.status} ${confirmRes.statusText}`);
   if (!confirmRes.ok) {
-    throw new UploadError("asset confirmation failed", confirmRes);
+    const body = await snapshotBody(confirmRes);
+    dlog(debug, `step 3: body: ${body}`);
+    throw new UploadError("asset confirmation failed", confirmRes, body);
   }
 
   return policies.asset;
@@ -151,8 +188,12 @@ export class UploadError extends Error {
   constructor(
     message: string,
     public response: Response,
+    public body?: string,
   ) {
-    super(`${message}: ${response.status} ${response.statusText}`);
+    const suffix = body && body.trim() ? ` — ${body.trim().slice(0, 300)}` : "";
+    super(
+      `${message}: ${response.status} ${response.statusText}${suffix}`,
+    );
     this.name = "UploadError";
   }
 }

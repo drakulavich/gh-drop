@@ -23,7 +23,7 @@ import { loadConfig, saveConfig, configPath } from "./config.ts";
 import { uploadAttachment, UploadError } from "./upload.ts";
 import { resolveRepo, postIssueComment, ensureGhAuth } from "./gh.ts";
 
-const VERSION = "0.1.2";
+const VERSION = "0.1.3";
 
 function printUsage(): void {
   console.log(`gh-drop ${VERSION} — drop images into GitHub issues & PRs
@@ -43,6 +43,7 @@ FLAGS
   --host <url>         GitHub host. Default https://github.com (for GHE).
   --width <px>         Render uploaded images at this width (wraps in <img>).
   --dry-run            Upload images but don't post the comment.
+  --debug              Print each upload request's status and any error body.
   --verify             After upload, open each asset URL in Bun.WebView and
                        save a screenshot to /tmp/gh-drop/ to confirm it
                        renders.
@@ -126,6 +127,7 @@ interface DropOpts {
   width?: number;
   dryRun: boolean;
   verify: boolean;
+  debug: boolean;
 }
 
 async function cmdDrop(opts: DropOpts): Promise<void> {
@@ -175,6 +177,7 @@ async function cmdDrop(opts: DropOpts): Promise<void> {
         repositoryId: repo.id,
         cookie: cfg.cookie,
         host,
+        debug: opts.debug,
       });
       assets.push({ url: asset.href, filename: p.filename });
       console.log(`done`);
@@ -281,6 +284,7 @@ async function main(): Promise<void> {
       host: { type: "string" },
       width: { type: "string" },
       "dry-run": { type: "boolean" },
+      debug: { type: "boolean" },
       verify: { type: "boolean" },
     },
     allowPositionals: false,
@@ -308,6 +312,7 @@ async function main(): Promise<void> {
     host: values.host,
     width,
     dryRun: Boolean(values["dry-run"]),
+    debug: Boolean(values.debug),
     verify: Boolean(values.verify),
   });
 }
