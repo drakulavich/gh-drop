@@ -7,23 +7,89 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  # ─── macOS: compile + ad-hoc codesign darwin binaries ───────────────────
+  # Bun 1.3.12+ has a known bug (oven-sh/bun#29306) where `--compile` emits
+  # a corrupt LC_CODE_SIGNATURE on arm64, so `gh extension install`'s
+  # post-download `codesign -s -` fails ("failed to codesign downloaded
+  # binary"). Workaround per that issue: strip the bad signature and
+  # ad-hoc re-sign. We do it here so the binary we ship is already clean.
+  build-darwin:
+    runs-on: macos-14 # Apple Silicon runner — `codesign` available
+    strategy:
+      matrix:
+        include:
+          - gh_triple: darwin-amd64
+            bun_target: bun-darwin-x64
+          - gh_triple: darwin-arm64
+            bun_target: bun-darwin-arm64
     steps:
       - uses: actions/checkout@v4
-
       - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.3.12" }
+      - name: Build
+        run: |
+          OUT="dist/gh-drop_${GITHUB_REF_NAME}_${{ matrix.gh_triple }}"
+          mkdir -p dist
+          bun build src/cli.ts --compile --minify \
+            --target=${{ matrix.bun_target }} --outfile="$OUT"
+      - name: Strip corrupt signature + ad-hoc re-sign
+        run: |
+          F="dist/gh-drop_${GITHUB_REF_NAME}_${{ matrix.gh_triple }}"
+          codesign --remove-signature "$F" || true
+          codesign --force --sign - "$F"
+          codesign --verify --verbose "$F"
+      - uses: actions/upload-artifact@v4
         with:
-          bun-version: "1.3.12"
+          name: bin-${{ matrix.gh_triple }}
+          path: dist/gh-drop_*
 
-      - name: Install deps
-        run: bun install
-
-      - name: Typecheck
-        run: bun run typecheck
-
-      - name: Publish release with precompiled binaries
-        uses: cli/gh-extension-precompile@v2
+  # ─── Linux + Windows: no codesign needed ────────────────────────────────
+  build-other:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - gh_triple: linux-amd64
+            bun_target: bun-linux-x64
+            ext: ""
+          - gh_triple: linux-arm64
+            bun_target: bun-linux-arm64
+            ext: ""
+          - gh_triple: windows-amd64
+            bun_target: bun-windows-x64
+            ext: .exe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.3.12" }
+      - name: Build
+        run: |
+          OUT="dist/gh-drop_${GITHUB_REF_NAME}_${{ matrix.gh_triple }}${{ matrix.ext }}"
+          mkdir -p dist
+          bun build src/cli.ts --compile --minify \
+            --target=${{ matrix.bun_target }} --outfile="$OUT"
+      - uses: actions/upload-artifact@v4
         with:
-          # Non-Go build — our script cross-compiles with Bun.
-          build_script_override: "script/build.sh"
+          name: bin-${{ matrix.gh_triple }}
+          path: dist/gh-drop_*
+
+  # ─── Gather everything and cut the release ──────────────────────────────
+  release:
+    needs: [build-darwin, build-other]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: bin-*
+          merge-multiple: true
+      - run: ls -lh dist/
+      - name: Create release with binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            dist/gh-drop_*

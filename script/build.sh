@@ -46,6 +46,16 @@ for entry in "${TARGETS[@]}"; do
     --minify \
     --target="$bun_target" \
     --outfile="$out"
+
+  # Workaround for oven-sh/bun#29306: Bun 1.3.12+ emits a corrupt
+  # LC_CODE_SIGNATURE on macOS arm64 which causes `gh extension install`'s
+  # post-download ad-hoc sign to fail. Strip + re-sign when we're on macOS
+  # AND the target is darwin (cross-compiled darwin binaries built on
+  # Linux go through the CI workflow, which signs on a macOS runner).
+  if [[ "$gh_triple" == darwin-* && "$(uname -s)" == "Darwin" ]]; then
+    codesign --remove-signature "$out" 2>/dev/null || true
+    codesign --force --sign - "$out"
+  fi
 done
 
 # gh-extension-precompile uploads every file in dist/ as a release asset.
