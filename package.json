@@ -1,6 +1,6 @@
 {
   "name": "gh-drop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Drop images into GitHub issues & PRs from the CLI. A gh extension powered by Bun.",
   "type": "module",
   "private": true,
