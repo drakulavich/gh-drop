@@ -1,0 +1,29 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.12"
+
+      - name: Install deps
+        run: bun install
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Publish release with precompiled binaries
+        uses: cli/gh-extension-precompile@v2
+        with:
+          # Non-Go build — our script cross-compiles with Bun.
+          build_script_override: "script/build.sh"

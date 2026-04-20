@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Development launcher. When gh-drop is installed as a gh extension via
+# `gh extension install drakulavich/gh-drop`, gh looks for an executable
+# named `gh-drop` at the repo root. This shim runs the TypeScript CLI
+# through Bun for dev & source installs.
+#
+# For release installs, we ship precompiled platform binaries and the
+# `gh-extension.yml` manifest tells gh to download & execute those instead
+# of this shim.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if ! command -v bun >/dev/null 2>&1; then
+  echo "gh-drop: bun is required for source installs. Install from https://bun.sh" >&2
+  echo "       or install a release via: gh extension install drakulavich/gh-drop --pin <tag>" >&2
+  exit 1
+fi
+
+exec bun run "$SCRIPT_DIR/src/cli.ts" "$@"
