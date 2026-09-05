@@ -1,5 +1,30 @@
 # gh-drop
 
+> [!IMPORTANT]
+> **Superseded by `gh` itself. This repository is archived.**
+>
+> Since [`gh` v2.99.0](https://github.com/cli/cli/releases/tag/v2.99.0), the CLI uploads
+> images and videos natively through a supported API:
+>
+> ```bash
+> gh issue comment 123 --attach './screenshot.png#The error state'
+> ```
+>
+> The flag works on `issue create`, `issue edit`, `issue comment`, `pr create`,
+> `pr edit` and `pr comment`, takes up to 50 files per command, and rewrites a
+> `![alt](./local.png)` already present in the body to point at the uploaded asset.
+>
+> Use it instead. It authenticates with your ordinary `gh` token, where `gh-drop`
+> needed the `user_session` browser cookie copied out of DevTools, which grants full
+> access to your account and expires when you sign out. That difference is the whole
+> reason to switch, and it is worth more than any feature below.
+>
+> Three things here have no equivalent in the built-in flag: `--width` for a fixed
+> render width, `--verify` for screenshotting the uploaded asset, and GitHub
+> Enterprise Server, which the `gh` announcement does not list among the supported
+> hosts (it names GitHub.com and Enterprise Cloud). If you need one of those, the
+> code still works, but understand the cookie you are handing it.
+
 Drop images into GitHub issues and PRs from the command line.
 A [`gh`](https://cli.github.com) extension, written in TypeScript, powered by [Bun](https://bun.sh).
 
@@ -11,8 +36,9 @@ gh drop --issue 123 --image ./screenshot.png
 
 ## Why
 
-`gh` can't upload images to issue or PR comments — GitHub never shipped a
-public API for it. The web UI does it through an internal `/upload/policies/assets`
+`gh` couldn't upload images to issue or PR comments when this was written, because
+GitHub had shipped no public API for it. It has one now, which is why the notice above
+sends you to `gh --attach` instead. The web UI does it through an internal `/upload/policies/assets`
 endpoint that requires a browser session cookie. `gh-drop` replicates that
 flow from the terminal so your AI agent, CI run, or bug-report script can
 attach screenshots without a browser.
